@@ -5,6 +5,15 @@ import streamlit as st
 import plotly.express as px
 st.header('st.write')
 
+
+from datetime import time, datetime
+appointment = st.slider(
+     "Schedule your appointment:",
+     value=(time(11, 30), time(12, 45)))
+st.write("You're scheduled for:", appointment)
+
+
+
 # 样例 1
 
 st.write('Hello, *World!* :apple:')
@@ -48,8 +57,4 @@ fig = px.scatter(
 )
 st.write(fig)
 
-from datetime import time, datetime
-appointment = st.slider(
-     "Schedule your appointment:",
-     value=(time(11, 30), time(12, 45)))
-st.write("You're scheduled for:", appointment)
+
