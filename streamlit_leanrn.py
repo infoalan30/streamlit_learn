@@ -56,5 +56,5 @@ fig = px.scatter(
  color_continuous_scale='RdBu', # 红蓝渐变表示正负
 )
 st.write(fig)
-st.image("/static/1111.png")
+st.image("./app/static/1111.png")
 
