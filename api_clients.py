@@ -125,7 +125,7 @@ class GoogleClient(BaseChatClient):
         # Construct the API endpoint URL
         # Using v1beta as it often gets newer models first
         api_endpoint = f"{self.base_url}/v1beta/models/{model}:streamGenerateContent"
-        request_url = f"{api_endpoint}?key={self.api_key}"
+        request_url = f"{api_endpoint}?alt=sse&key={self.api_key}"
 
         # Prepare the payload in Google REST format
         payload = self._prepare_google_rest_payload(messages)
