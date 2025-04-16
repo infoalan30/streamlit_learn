@@ -1,20 +1,24 @@
-# api_clients.py
 import streamlit as st
 from openai import OpenAI
 from abc import ABC, abstractmethod
-# NEW: Import requests and json
 import requests
 import json
 import os
 import base64
 import io
 from PIL import Image
-import traceback # Keep for error logging
+import traceback
 
 # --- Configuration ---
 XAI_API_BASE_URL = "https://api.x.ai/v1"
-# NEW: Google AI REST API Endpoint Configuration
-GOOGLE_API_BASE_URL = "https://generativelanguage.googleapis.com" # Base URL
+GOOGLE_API_BASE_URL = "https://generativelanguage.googleapis.com"
+OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_MODELS_INFO = {
+    "deepseek_R1": "deepseek/deepseek-r1:free",
+    "deepseek_V3": "deepseek/deepseek-chat-v3-0324:free",
+    "gemini-2.0-flash-exp": "google/gemini-2.0-flash-exp:free",
+    "gemini-2.5-pro-exp": "google/gemini-2.5-pro-exp-03-25:free"
+}
 
 # --- Base Client Class ---
 class BaseChatClient(ABC):
@@ -24,7 +28,6 @@ class BaseChatClient(ABC):
 
 # --- xAI Client Implementation ---
 class XAIClient(BaseChatClient):
-    # ... (Keep XAIClient exactly as it was) ...
     def __init__(self, api_key: str = None, base_url: str = XAI_API_BASE_URL):
         if api_key is None:
             api_key = st.secrets.get("XAI_API_KEY")
@@ -32,8 +35,8 @@ class XAIClient(BaseChatClient):
                 st.error("xAI API key (XAI_API_KEY) not found in Streamlit secrets.")
                 st.stop()
         if not base_url:
-             st.error("xAI API Base URL is required.")
-             st.stop()
+            st.error("xAI API Base URL is required.")
+            st.stop()
         try:
             self.client = OpenAI(api_key=api_key, base_url=base_url)
         except Exception as e:
@@ -53,8 +56,7 @@ class XAIClient(BaseChatClient):
             st.error(f"xAI API Error: {e}")
             return None
 
-
-# --- Google Client Implementation (using requests) ---
+# --- Google Client Implementation ---
 class GoogleClient(BaseChatClient):
     def __init__(self, api_key: str = None, base_url: str = GOOGLE_API_BASE_URL):
         if api_key is None:
@@ -64,23 +66,18 @@ class GoogleClient(BaseChatClient):
                 st.stop()
         self.api_key = api_key
         self.base_url = base_url
-        # We don't need to configure a library client anymore
 
-    def _prepare_google_rest_payload(self, messages: list):
+    def _prepare_google_rest_payload(self, messages: list, google_search: bool = False):
         """Converts OpenAI message history to Google REST API contents format."""
         google_contents = []
         for msg in messages:
             role = msg.get("role")
             content = msg.get("content")
-            # Google REST API uses 'user' and 'model' roles
             google_role = "user" if role == "user" else "model"
-
             parts = []
             if isinstance(content, str):
-                # Simple text message
                 parts.append({"text": content})
             elif isinstance(content, list):
-                # Multimodal message (list of parts)
                 for item in content:
                     item_type = item.get("type")
                     if item_type == "text":
@@ -88,76 +85,47 @@ class GoogleClient(BaseChatClient):
                     elif item_type == "image_url":
                         image_data_uri = item["image_url"]["url"]
                         try:
-                            # Extract mime type and base64 data from data URI
                             header, encoded = image_data_uri.split(",", 1)
                             mime_type = header.split(":")[1].split(";")[0]
-                            # Add image part in Google REST format
                             parts.append({
                                 "inlineData": {
                                     "mimeType": mime_type,
-                                    "data": encoded # Base64 data
+                                    "data": encoded
                                 }
                             })
                         except Exception as e:
                             st.warning(f"Could not process image data URI for Google REST API: {e}")
-                            parts.append({"text": "[Image processing error]"}) # Placeholder
-            else:
-                # Handle unexpected content format if necessary
-                 st.warning(f"Unsupported content type in message for Google REST: {type(content)}")
-                 parts.append({"text": "[Unsupported content format]"})
-
-
-            # Append the message with its parts to the contents list
-            # Skip empty messages potentially caused by filtering/errors
+                            parts.append({"text": "[Image processing error]"})
             if parts:
                 google_contents.append({"role": google_role, "parts": parts})
+        payload = {"contents": google_contents}
+        if google_search:
+            payload["tools"] = [{"google_search": {}}]
+        return payload
 
-        return {"contents": google_contents}
-
-    def chat_completion(self, model: str, messages: list, stream: bool = False, **kwargs):
-        """Calls the Google Generative Language REST API."""
+    def chat_completion(self, model: str, messages: list, stream: bool = False, google_search: bool = False, **kwargs):
         if not stream:
-            # Non-streaming is more complex to parse correctly with requests for Gemini
-            # Let's focus on the streaming implementation first as it's more common for chat
             st.warning("Non-streaming not fully implemented for Google REST client yet. Using stream.")
-            stream = True # Force stream for now
-
-        # Construct the API endpoint URL
-        # Using v1beta as it often gets newer models first
+            stream = True
         api_endpoint = f"{self.base_url}/v1beta/models/{model}:streamGenerateContent"
         request_url = f"{api_endpoint}?alt=sse&key={self.api_key}"
-
-        # Prepare the payload in Google REST format
-        payload = self._prepare_google_rest_payload(messages)
-
-        # Add generationConfig if needed (e.g., temperature from kwargs)
-        # Example: payload["generationConfig"] = {"temperature": kwargs.get("temperature", 0.7)}
-
+        payload = self._prepare_google_rest_payload(messages, google_search=google_search)
         headers = {'Content-Type': 'application/json'}
-
         try:
-            # Make the POST request with streaming enabled
             response = requests.post(request_url, headers=headers, json=payload, stream=True)
-            response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
-
-            # Define a generator to process the stream
+            response.raise_for_status()
             def stream_processor(response_stream):
                 buffer = ""
+                web_search_used = False
                 try:
                     for chunk in response_stream.iter_lines():
                         if chunk:
                             decoded_chunk = chunk.decode('utf-8')
-                            # Google streams often prefix with 'data: ' - remove if present
                             if decoded_chunk.startswith('data: '):
                                 decoded_chunk = decoded_chunk[len('data: '):]
-                            # Sometimes the stream sends chunks that aren't complete JSON objects
-                            # accumulate until we can parse. Assume JSON objects don't span iter_lines chunks.
-                            buffer = decoded_chunk # Replace buffer with the new line
+                            buffer = decoded_chunk
                             try:
-                                # Attempt to parse the buffer as JSON
                                 data = json.loads(buffer)
-                                # Extract text based on expected Gemini REST API structure
-                                # This structure can vary slightly, adjust as needed based on actual API response
                                 text_content = ""
                                 if 'candidates' in data and data['candidates']:
                                     candidate = data['candidates'][0]
@@ -165,51 +133,107 @@ class GoogleClient(BaseChatClient):
                                         for part in candidate['content']['parts']:
                                             if 'text' in part:
                                                 text_content += part['text']
-                                # Yield extracted text if any
+                                    # Check for web search metadata
+                                    grounding_metadata = candidate.get('groundingMetadata', {})
+                                    web_search_queries = grounding_metadata.get('webSearchQueries', [])
+                                    grounding_supports = grounding_metadata.get('groundingSupports', [])
+                                    if web_search_queries and grounding_supports:
+                                        web_search_used = True
                                 if text_content:
-                                     yield text_content
-                                # Check for finish reason or errors if needed
-                                # if candidate.get('finishReason'): break
-                                # Handle potential safety blocks within the stream
+                                    yield text_content
                                 if candidate.get('finishReason') == 'SAFETY':
                                     yield "[Blocked by API due to safety settings]"
                                     break
-                                # Reset buffer after successful parse
                                 buffer = ""
                             except json.JSONDecodeError:
-                                # If buffer is not valid JSON yet, wait for more chunks (might happen with partial chunks)
-                                # Or if it's just stream metadata/empty lines, ignore
-                                # print(f"Skipping non-JSON line: {buffer}") # Debugging
-                                pass # Continue to next line
+                                pass
                 except requests.exceptions.RequestException as http_err:
-                     yield f"[Network Error during streaming: {http_err}]"
+                    yield f"[Network Error during streaming: {http_err}]"
                 except Exception as stream_err:
-                     yield f"[Error processing stream: {stream_err}]"
-                     traceback.print_exc() # Log full error
-
-            return stream_processor(response) # Return the generator
-
+                    yield f"[Error processing stream: {stream_err}]"
+                    traceback.print_exc()
+                # Attach web_search_used attribute to the generator
+                stream_processor.web_search_used = web_search_used
+            return stream_processor(response)
         except requests.exceptions.HTTPError as errh:
             st.error(f"HTTP Error calling Google API: {errh}")
-            # Try to get more details from the response body if possible
             try:
                 error_details = errh.response.json()
                 st.error(f"API Response: {error_details}")
             except:
                 st.error(f"API Response Content: {errh.response.text}")
-            return None # Indicate failure
-        except requests.exceptions.ConnectionError as errc:
-            st.error(f"Connection Error calling Google API: {errc}")
-            return None
-        except requests.exceptions.Timeout as errt:
-            st.error(f"Timeout Error calling Google API: {errt}")
             return None
         except requests.exceptions.RequestException as err:
             st.error(f"Error calling Google API: {err}")
             return None
         except Exception as e:
-             st.error(f"An unexpected error occurred in GoogleClient: {e}")
-             traceback.print_exc()
-             return None
+            st.error(f"An unexpected error occurred in GoogleClient: {e}")
+            traceback.print_exc()
+            return None
 
-# --- Add other clients here later ---
+# --- OpenRouter Client Implementation ---
+class OpenRouterClient(BaseChatClient):
+    def __init__(self, api_key: str = None, base_url: str = OPENROUTER_API_BASE_URL):
+        if api_key is None:
+            api_key = st.secrets.get("OPENROUTER_API_KEY")
+            if not api_key:
+                st.error("OpenRouter API key (OPENROUTER_API_KEY) not found in Streamlit secrets.")
+                st.stop()
+        self.api_key = api_key
+        self.base_url = base_url
+        self.models_info = OPENROUTER_MODELS_INFO
+
+    def chat_completion(self, model: str, messages: list, stream: bool = False, **kwargs):
+        model_id = self.models_info.get(model, model)
+        api_endpoint = f"{self.base_url}/chat/completions"
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self.api_key}'
+        }
+        payload = {
+            "model": model_id,
+            "messages": messages,
+            "stream": stream
+        }
+        try:
+            if stream:
+                response = requests.post(api_endpoint, headers=headers, json=payload, stream=True)
+                response.raise_for_status()
+                def stream_processor(response_stream):
+                    for chunk in response_stream.iter_lines():
+                        if chunk:
+                            decoded_chunk = chunk.decode('utf-8')
+                            if decoded_chunk.startswith('data: '):
+                                decoded_chunk = decoded_chunk[len('data: '):]
+                            if decoded_chunk == '[DONE]':
+                                break
+                            try:
+                                data = json.loads(decoded_chunk)
+                                delta = data.get('choices', [{}])[0].get('delta', {})
+                                content = delta.get('content', '')
+                                if content:
+                                    yield content
+                            except json.JSONDecodeError:
+                                continue
+                return stream_processor(response)
+            else:
+                response = requests.post(api_endpoint, headers=headers, json=payload)
+                response.raise_for_status()
+                data = response.json()
+                content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
+                return content
+        except requests.exceptions.HTTPError as errh:
+            st.error(f"HTTP Error calling OpenRouter API: {errh}")
+            try:
+                error_details = errh.response.json()
+                st.error(f"API Response: {error_details}")
+            except:
+                st.error(f"API Response Content: {errh.response.text}")
+            return None
+        except requests.exceptions.RequestException as err:
+            st.error(f"Error calling OpenRouter API: {err}")
+            return None
+        except Exception as e:
+            st.error(f"An unexpected error occurred in OpenRouterClient: {e}")
+            traceback.print_exc()
+            return None
