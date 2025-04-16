@@ -319,21 +319,8 @@ if should_call_api:
 
             # Check if the stream object is valid
             if stream:
-                response_content = []
-                if target_api_family == "openai":
-                    # Handle OpenAI streaming format (XAIClient)
-                    for chunk in stream:
-                        if chunk.choices and chunk.choices[0].delta.content:
-                            content = chunk.choices[0].delta.content
-                            response_content.append(content)
-                            message_placeholder.markdown("".join(response_content))
-                else:
-                    # Handle GoogleClient and OpenRouterClient (custom generators)
-                    for chunk in stream:
-                        response_content.append(chunk)
-                        message_placeholder.markdown("".join(response_content))
-                response_content = "".join(response_content)
-                # Check for Google Search usage if applicable
+                response_content = message_placeholder.write_stream(stream)
+                # Append Google Search status for Gemini
                 if google_search_enabled and hasattr(stream, 'web_search_used') and stream.web_search_used:
                     response_content += "\n**Web Search: YES**"
                 else:
