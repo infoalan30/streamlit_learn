@@ -4,7 +4,7 @@ import io
 from PIL import Image
 import time
 # Import clients
-from api_clients import XAIClient, GoogleClient # Assuming api_clients.py is correct
+from api_clients import XAIClient, GoogleClient, OpenRouterClient # Assuming api_clients.py is correct
 import traceback
 import json
 
