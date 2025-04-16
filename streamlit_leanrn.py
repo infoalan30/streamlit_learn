@@ -9,10 +9,15 @@ import traceback
 import json
 
 # --- Configuration ---
-TEXT_MODELS = ["grok-2-latest"]
-VISION_MODELS = ["grok-2-vision-latest", "gemini-2.0-flash"]
-ALL_AVAILABLE_MODELS = TEXT_MODELS + VISION_MODELS
-DEFAULT_MODEL = "grok-2-latest"
+MODEL_PROVIDERS = {
+    "xAI": ["grok-3-beta", "grok-3-mini-fast-beta", "grok-2-vision-1212"],
+    "Gemini": ["gemini-2.0-flash", "gemini-1.5-pro"],
+    "openrouter": ["gemini-2.0-flash-exp", "gemini-2.5-pro-exp", "deepseek_R1", "deepseek_V3"]
+}
+TEXT_MODELS = ["grok-3-beta", "grok-3-mini-fast-beta", "gemini-1.5-pro", "deepseek_R1", "deepseek_V3"]
+VISION_MODELS = ["grok-2-vision-1212", "gemini-2.0-flash", "gemini-2.0-flash-exp", "gemini-2.5-pro-exp"]
+DEFAULT_PROVIDER = "xAI"
+DEFAULT_MODEL = "grok-3-mini-fast-beta"
 CONTEXT_MESSAGES_COUNT = 3
 
 # --- Helper Functions ---
@@ -41,6 +46,9 @@ def init_session_state():
     if "google_client" not in st.session_state:
         try: st.session_state.google_client = GoogleClient()
         except Exception as e: st.error(f"Google Init Err: {e}"); st.session_state.google_client = None
+    if "openrouter_client" not in st.session_state:
+        try: st.session_state.openrouter_client = OpenRouterClient()
+        except Exception as e: st.error(f"OpenRouter Init Err: {e}"); st.session_state.openrouter_client = None
     # Chat state
     if "chat_sessions" not in st.session_state: st.session_state.chat_sessions = {}
     if "current_chat_id" not in st.session_state:
@@ -50,7 +58,8 @@ def init_session_state():
     if "staged_images_bytes" not in st.session_state: st.session_state.staged_images_bytes = []
     if "uploader_key_counter" not in st.session_state: st.session_state.uploader_key_counter = 0
     # Model selection state
-    if "selected_model" not in st.session_state: st.session_state.selected_model = DEFAULT_MODEL
+    if "selected_provider" not in st.session_state: st.session_state.selected_provider = DEFAULT_PROVIDER
+    if "selected_child_model" not in st.session_state: st.session_state.selected_child_model = DEFAULT_MODEL
 
 # --- Context Clearing Callback ---
 def handle_clear_context():
@@ -118,15 +127,30 @@ with st.sidebar:
 
 # --- Main Chat Area ---
 st.title(f"Multimodal Chat")
-st.info("ℹ️ Chat history session-based. Select model carefully based on content.")
+st.info("ℹ️ Chat history session-based. Select provider and model carefully based on content.")
 
 # --- Simplified MODEL SELECTION DROPDOWN ---
-st.selectbox(
-    "Select Model:",
-    options=ALL_AVAILABLE_MODELS, # Always show all
-    key="selected_model",         # State updated by widget interaction
-    help="Choose the desired model. Ensure it matches content (text/vision)."
-)
+# --- Model Selection Dropdowns ---
+col_provider, col_model = st.columns([1, 2])
+with col_provider:
+    selected_provider = st.selectbox(
+        "Select Provider:",
+        options=list(MODEL_PROVIDERS.keys()),
+        key="selected_provider",
+        help="Choose the API provider."
+    )
+with col_model:
+    # Get available models for the selected provider
+    available_models = MODEL_PROVIDERS.get(st.session_state.selected_provider, [])
+    # Ensure the selected child model is valid for the provider
+    if st.session_state.selected_child_model not in available_models:
+        st.session_state.selected_child_model = available_models[0] if available_models else DEFAULT_MODEL
+    selected_child_model = st.selectbox(
+        "Select Model:",
+        options=available_models,
+        key="selected_child_model",
+        help="Choose the model for the selected provider."
+    )
 
 # --- Input Controls ---
 control_cols = st.columns([1, 4], gap="small")
@@ -213,30 +237,32 @@ should_call_api = bool(current_messages and current_messages[-1]["role"] == "use
 
 if should_call_api:
     last_user_message_openai_format = current_messages[-1]
-    target_api_family = None # Initialize for use in except block
-    model_for_api_call = ""  # Initialize for use in except block
+    target_api_family = None
+    model_for_api_call = ""
 
     try:
         # --- Direct Model and Client Determination ---
-        model_for_api_call = st.session_state.selected_model
-        print(f"DEBUG: API Call - Using selected model from state: '{model_for_api_call}'")
+        model_for_api_call = st.session_state.selected_child_model
+        selected_provider = st.session_state.selected_provider
+        print(f"DEBUG: API Call - Provider: '{selected_provider}', Model: '{model_for_api_call}'")
 
         client = None
-        if model_for_api_call.startswith("grok"):
+        if selected_provider == "xAI":
             client = st.session_state.xai_client
             target_api_family = "openai"
-        elif model_for_api_call.startswith("gemini"):
+        elif selected_provider == "Gemini":
             client = st.session_state.google_client
             target_api_family = "google"
+        elif selected_provider == "openrouter":
+            client = st.session_state.openrouter_client
+            target_api_family = "openrouter"
         else:
-            # Use st.exception to show error and stop nicely
-            st.exception(f"Invalid model name '{model_for_api_call}' in state. Cannot determine API client.")
-            st.stop() # Stop execution
+            st.exception(f"Invalid provider '{selected_provider}' in state. Cannot determine API client.")
+            st.stop()
 
         if client is None:
-             st.exception(f"API Client for {target_api_family or model_for_api_call} is None (Initialization failed?). Check API keys.")
-             st.stop()
-        # --- End of Direct Model and Client Determination ---
+            st.exception(f"API Client for {target_api_family or model_for_api_call} is None (Initialization failed?). Check API keys.")
+            st.stop()
 
         # --- CONTEXT PREPARATION ---
         api_context_openai_format = []
@@ -255,13 +281,13 @@ if should_call_api:
                         if isinstance(original_content, list):
                             text_parts = [i['text'] for i in original_content if i.get('type') == 'text']
                             processed_content = " ".join(text_parts) if text_parts else "[ImgCtx]"
-                    else: # Vision model
+                    else:
                         if isinstance(original_content, list): processed_content = original_content
                 if processed_content is not None: processed_context_openai.append({"role": role, "content": processed_content})
             api_context_openai_format = processed_context_openai
-        else: st.toast("🧹 Context cleared.")
+        else:
+            st.toast("🧹 Context cleared.")
         st.session_state.context_cleared_for_next_turn = False
-        # --- END OF CONTEXT PREPARATION ---
 
         # --- Prepare final messages payload ---
         messages_for_api = api_context_openai_format + [last_user_message_openai_format]
@@ -273,53 +299,58 @@ if should_call_api:
         elif not payload_has_images and model_for_api_call in VISION_MODELS:
             st.info(f"ℹ️ Sending text-only request to vision model '{model_for_api_call}'.", icon="ℹ️")
 
+        # --- Special Handling for Gemini with Google Search ---
+        google_search_enabled = False
+        if selected_provider == "Gemini" and model_for_api_call == "gemini-2.0-flash":
+            google_search_enabled = True
+            # GoogleClient will handle adding the google_search tool
+
         # --- Call the selected API Client ---
         with st.chat_message("assistant"):
             message_placeholder = st.empty()
             print(f"INFO: Calling {target_api_family.upper()} API with model: {model_for_api_call}")
 
-            # Make the API call and get the stream object (or None on immediate failure)
-            stream = client.chat_completion(model=model_for_api_call, messages=messages_for_api, stream=True)
+            # Make the API call and get the stream object
+            stream = client.chat_completion(model=model_for_api_call, messages=messages_for_api, stream=True, google_search=google_search_enabled)
 
-            # Check if the stream object is valid before trying to write it
+            # Check if the stream object is valid
             if stream:
-                 response_content = message_placeholder.write_stream(stream)
+                response_content = []
+                for chunk in stream:
+                    response_content.append(chunk)
+                    message_placeholder.markdown("".join(response_content))
+                response_content = "".join(response_content)
+                # Check for Google Search usage if applicable
+                if google_search_enabled and hasattr(stream, 'web_search_used') and stream.web_search_used:
+                    response_content += "\n**Web Search: YES**"
+                else:
+                    response_content += "\n**Web Search: NO**"
+                message_placeholder.markdown(response_content)
             else:
-                 # Handle cases where the client explicitly returned None (e.g., connection error handled inside client)
-                 # We raise an exception here to be caught by the main handler below, ensuring consistent error formatting
-                 raise ValueError(f"{target_api_family.upper()} client returned None stream, possibly due to connection or setup error.")
+                raise ValueError(f"{target_api_family.upper()} client returned None stream, possibly due to connection or setup error.")
 
-        # If stream processing succeeded, store the result
-        assistant_content_to_store = str(response_content)
+        # Store the result
+        assistant_content_to_store = response_content
         st.session_state.chat_sessions.setdefault(st.session_state.current_chat_id, []).append(
             {"role": "assistant", "content": assistant_content_to_store}
         )
-        st.rerun() # Rerun after successful response
+        st.rerun()
 
-    # --- Centralized Exception Handling ---
     except Exception as e:
-        # Determine API family again safely, defaulting if needed
         api_origin = target_api_family.upper() if target_api_family else "UNKNOWN"
-        if not api_origin and model_for_api_call: # Try to guess from model name if family wasn't set
-             if model_for_api_call.startswith("grok"): api_origin = "OPENAI"
-             elif model_for_api_call.startswith("gemini"): api_origin = "GOOGLE"
-
-        # Construct the detailed error message for chat history
+        if not api_origin and model_for_api_call:
+            if model_for_api_call.startswith("grok"): api_origin = "OPENAI"
+            elif model_for_api_call.startswith("gemini"): api_origin = "GOOGLE"
+            elif model_for_api_call in MODEL_PROVIDERS["openrouter"]: api_origin = "OPENROUTER"
         error_content_for_history = f"*API Error ({api_origin}): {e}*"
-
-        # Display temporary error in UI
         st.error(error_content_for_history)
-
-        # Print details to console
         print(f"\n--- API Call Exception ({api_origin}) ---"); traceback.print_exc()
-        print(f"Model Attempted: {model_for_api_call}"); print(f"Messages Sent: {repr(messages_for_api)}"); print("---\n")
-
-        # Add detailed error to chat history
+        print(f"Provider: {st.session_state.selected_provider}, Model Attempted: {model_for_api_call}")
+        print(f"Messages Sent: {repr(messages_for_api)}"); print("---\n")
         try:
             st.session_state.chat_sessions.setdefault(st.session_state.current_chat_id, []).append(
-                 {"role": "assistant", "content": error_content_for_history} # Use the detailed message
+                {"role": "assistant", "content": error_content_for_history}
             )
         except Exception as e_inner:
-             st.error(f"History Error: Failed to add error message to chat history: {e_inner}")
-
-        st.rerun() # Rerun to display the error message in the chat history
+            st.error(f"History Error: Failed to add error message to chat history: {e_inner}")
+        st.rerun()
