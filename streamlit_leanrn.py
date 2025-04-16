@@ -273,17 +273,22 @@ if should_call_api:
             is_target_text_model = model_for_api_call in TEXT_MODELS
             processed_context_openai = []
             for msg in context_candidates_openai:
-                role = msg["role"]; original_content = msg.get("content"); processed_content = None
+                role = msg["role"]
+                original_content = msg.get("content")
+                processed_content = None
                 if role == "assistant":
-                    if isinstance(original_content, str): processed_content = original_content
+                    if isinstance(original_content, str):
+                        processed_content = original_content
                 elif role == "user":
                     if is_target_text_model:
                         if isinstance(original_content, list):
                             text_parts = [i['text'] for i in original_content if i.get('type') == 'text']
                             processed_content = " ".join(text_parts) if text_parts else "[ImgCtx]"
                     else:
-                        if isinstance(original_content, list): processed_content = original_content
-                if processed_content is not None: processed_context_openai.append({"role": role, "content": processed_content})
+                        if isinstance(original_content, list):
+                            processed_content = original_content
+                if processed_content is not None:
+                    processed_context_openai.append({"role": role, "content": processed_content})
             api_context_openai_format = processed_context_openai
         else:
             st.toast("🧹 Context cleared.")
@@ -303,7 +308,6 @@ if should_call_api:
         google_search_enabled = False
         if selected_provider == "Gemini" and model_for_api_call == "gemini-2.0-flash":
             google_search_enabled = True
-            # GoogleClient will handle adding the google_search tool
 
         # --- Call the selected API Client ---
         with st.chat_message("assistant"):
@@ -316,9 +320,18 @@ if should_call_api:
             # Check if the stream object is valid
             if stream:
                 response_content = []
-                for chunk in stream:
-                    response_content.append(chunk)
-                    message_placeholder.markdown("".join(response_content))
+                if target_api_family == "openai":
+                    # Handle OpenAI streaming format (XAIClient)
+                    for chunk in stream:
+                        if chunk.choices and chunk.choices[0].delta.content:
+                            content = chunk.choices[0].delta.content
+                            response_content.append(content)
+                            message_placeholder.markdown("".join(response_content))
+                else:
+                    # Handle GoogleClient and OpenRouterClient (custom generators)
+                    for chunk in stream:
+                        response_content.append(chunk)
+                        message_placeholder.markdown("".join(response_content))
                 response_content = "".join(response_content)
                 # Check for Google Search usage if applicable
                 if google_search_enabled and hasattr(stream, 'web_search_used') and stream.web_search_used:
@@ -339,14 +352,19 @@ if should_call_api:
     except Exception as e:
         api_origin = target_api_family.upper() if target_api_family else "UNKNOWN"
         if not api_origin and model_for_api_call:
-            if model_for_api_call.startswith("grok"): api_origin = "OPENAI"
-            elif model_for_api_call.startswith("gemini"): api_origin = "GOOGLE"
-            elif model_for_api_call in MODEL_PROVIDERS["openrouter"]: api_origin = "OPENROUTER"
-        error_content_for_history = f"*API Error ({api_origin}): {e}*"
+            if model_for_api_call.startswith("grok"):
+                api_origin = "OPENAI"
+            elif model_for_api_call.startswith("gemini"):
+                api_origin = "GOOGLE"
+            elif model_for_api_call in MODEL_PROVIDERS["openrouter"]:
+                api_origin = "OPENROUTER"
+        error_content_for_history = f"*API Error ({api_origin}): {str(e)}*"
         st.error(error_content_for_history)
-        print(f"\n--- API Call Exception ({api_origin}) ---"); traceback.print_exc()
+        print(f"\n--- API Call Exception ({api_origin}) ---")
+        traceback.print_exc()
         print(f"Provider: {st.session_state.selected_provider}, Model Attempted: {model_for_api_call}")
-        print(f"Messages Sent: {repr(messages_for_api)}"); print("---\n")
+        print(f"Messages Sent: {repr(messages_for_api)}")
+        print("---\n")
         try:
             st.session_state.chat_sessions.setdefault(st.session_state.current_chat_id, []).append(
                 {"role": "assistant", "content": error_content_for_history}
