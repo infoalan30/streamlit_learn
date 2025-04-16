@@ -48,12 +48,15 @@ class XAIClient(BaseChatClient):
             response = self.client.chat.completions.create(
                 model=model,
                 messages=messages,
-                stream=stream,
-                **kwargs
+                stream=stream
             )
+            if stream and not hasattr(response, '__iter__'):
+                st.error(f"xAI API returned non-iterable response for streaming: {type(response)}")
+                return None
             return response
         except Exception as e:
-            st.error(f"xAI API Error: {e}")
+            st.error(f"xAI API Error: {str(e)}")
+            traceback.print_exc()
             return None
 
 # --- Google Client Implementation ---
