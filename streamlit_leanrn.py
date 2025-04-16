@@ -73,7 +73,7 @@ def handle_clear_context():
     st.rerun()
 
 # --- Main App Logic ---
-st.set_page_config(layout="wide", page_title="Multimodal Chat")
+st.set_page_config(layout="wide", page_title="AI Chat")
 init_session_state()
 
 # --- Sidebar ---
