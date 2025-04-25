@@ -11,7 +11,7 @@ import json
 # --- Configuration ---
 MODEL_PROVIDERS = {
     "xAI": ["grok-3-mini-fast-beta", "grok-3-beta", "grok-2-vision-1212"],
-    "Gemini": ["gemini-2.0-flash", "gemini-2.5-flash-preview-04-17", "gemini-2.5-pro-exp-03-25"],
+    "Gemini": ["gemini-2.5-flash-preview-04-17", "gemini-2.5-pro-exp-03-25", "gemini-2.0-flash"],
     "openrouter": ["gemini-2.0-flash-exp", "gemini-2.5-pro-exp", "deepseek_R1", "deepseek_V3"]
 }
 TEXT_MODELS = ["grok-3-beta", "grok-3-mini-fast-beta", "gemini-1.5-pro", "deepseek_R1", "deepseek_V3"]
