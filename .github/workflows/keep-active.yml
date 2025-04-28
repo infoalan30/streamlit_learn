@@ -1,0 +1,21 @@
+name: Keep Streamlit Active
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # 每6小时运行一次
+
+jobs:
+  update-file:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Update keep-active file
+        run: |
+          echo "$(date)" > keep-active.txt
+          git add keep-active.txt
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git commit -m "Update keep-active.txt to keep Streamlit active"
+          git push
