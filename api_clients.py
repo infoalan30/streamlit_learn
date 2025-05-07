@@ -117,9 +117,8 @@ class GoogleClient(BaseChatClient):
         try:
             response = requests.post(request_url, headers=headers, json=payload, stream=True)
             response.raise_for_status()
-            web_search_used = False
+            _web_search_status_container = [False]
             def stream_processor(response_stream):
-                nonlocal web_search_used
                 buffer = ""
                 web_search_used = False
                 try:
@@ -144,7 +143,7 @@ class GoogleClient(BaseChatClient):
                                         web_search_queries = grounding_metadata.get('webSearchQueries', [])
                                         grounding_supports = grounding_metadata.get('groundingSupports', [])
                                         if web_search_queries and grounding_supports:
-                                            web_search_used = True
+                                            status_container[0] = True
                                     except:
                                         pass
                                 if text_content:
@@ -152,7 +151,6 @@ class GoogleClient(BaseChatClient):
                                 if candidate.get('finishReason') == 'SAFETY':
                                     yield "[Blocked by API due to safety settings]"
                                     break
-                                buffer = ""
                             except json.JSONDecodeError:
                                 pass
                 except requests.exceptions.RequestException as http_err:
@@ -161,18 +159,10 @@ class GoogleClient(BaseChatClient):
                     yield f"[Error processing stream: {stream_err}]"
                     traceback.print_exc()
 
-            stream = stream_processor(response)
+            generator_instance = stream_processor(response, _web_search_status_container)
+            generator_instance.web_search_status_container = _web_search_status_container
             # Process stream and collect content
-            with st.chat_message("assistant"):
-                message_placeholder = st.empty()
-                response_content = message_placeholder.markdown_stream(stream)
-                # Append web search status
-                if google_search_enabled and web_search_used:
-                    response_content += "\n**Web Search: YES**"
-                else:
-                    response_content += "\n**Web Search: NO**"
-                message_placeholder.markdown(response_content)
-            return stream
+            return generator_instance
         except requests.exceptions.HTTPError as errh:
             st.error(f"HTTP Error calling Google API: {errh}")
             try:
