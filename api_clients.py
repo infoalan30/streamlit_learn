@@ -137,7 +137,7 @@ class GoogleClient(BaseChatClient):
                                             if 'text' in part:
                                                 text_content += part['text']
                                     # Check for web search metadata
-                                    grounding_metadata = candidate.get('groundingMetadata', [])
+                                    grounding_metadata = candidate.get('groundingMetadata', {})
                                     web_search_queries = grounding_metadata.get('webSearchQueries', [])
                                     grounding_supports = grounding_metadata.get('groundingSupports', [])
                                     if web_search_queries and grounding_supports:
