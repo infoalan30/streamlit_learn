@@ -16,6 +16,7 @@ MODEL_PROVIDERS = {
 }
 TEXT_MODELS = ["grok-3-beta", "grok-3-mini-fast-beta", "gemini-1.5-pro", "deepseek_R1", "deepseek_V3"]
 VISION_MODELS = ["grok-2-vision-1212", "gemini-2.0-flash", "gemini-2.0-flash-exp", "gemini-2.5-pro-exp"]
+GEMINI_MODELS_WITH_GOOGLE_SEARCH = ["gemini-2.5-flash-preview-04-17", "gemini-2.0-flash"]
 DEFAULT_PROVIDER = "xAI"
 DEFAULT_MODEL = "grok-3-mini-fast-beta"
 CONTEXT_MESSAGES_COUNT = 3
@@ -306,7 +307,7 @@ if should_call_api:
 
         # --- Special Handling for Gemini with Google Search ---
         google_search_enabled = False
-        if selected_provider == "Gemini" and model_for_api_call == "gemini-2.0-flash":
+        if selected_provider == "Gemini" and model_for_api_call in GEMINI_MODELS_WITH_GOOGLE_SEARCH:
             google_search_enabled = True
 
         # --- Call the selected API Client ---
