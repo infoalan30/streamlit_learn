@@ -1,5 +1,6 @@
+# api_clients.py
 import streamlit as st
-from openai import OpenAI
+from openai import OpenAI # Pastikan OpenAI diimpor jika XAIClient menggunakannya
 from abc import ABC, abstractmethod
 import requests
 import json
@@ -52,12 +53,32 @@ class XAIClient(BaseChatClient):
             )
             if stream and not hasattr(response, '__iter__'):
                 st.error(f"xAI API returned non-iterable response for streaming: {type(response)}")
-                return None
+                return None # Explicitly return None on error
             return response
         except Exception as e:
             st.error(f"xAI API Error: {str(e)}")
             traceback.print_exc()
-            return None
+            return None # Explicitly return None on error
+
+
+# --- Helper Class for Google Stream ---
+class GoogleStreamWrapper:
+    def __init__(self, generator, status_container):
+        self.generator = generator
+        self.web_search_status_container = status_container # Ini adalah atribut yang bisa kita akses
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self.generator)
+
+    # Tambahkan ini jika Anda menggunakan st.write_stream(stream)
+    # atau jika pustaka lain mengharapkan metode .close()
+    def close(self):
+        if hasattr(self.generator, 'close'):
+            self.generator.close()
+
 
 # --- Google Client Implementation ---
 class GoogleClient(BaseChatClient):
@@ -71,7 +92,6 @@ class GoogleClient(BaseChatClient):
         self.base_url = base_url
 
     def _prepare_google_rest_payload(self, messages: list, google_search: bool = False):
-        """Converts OpenAI message history to Google REST API contents format."""
         google_contents = []
         for msg in messages:
             role = msg.get("role")
@@ -106,34 +126,32 @@ class GoogleClient(BaseChatClient):
             payload["tools"] = [{"google_search": {}}]
         return payload
 
-
-
     def chat_completion(self, model: str, messages: list, stream: bool = False, google_search: bool = False, **kwargs):
         if not stream:
             st.warning("Non-streaming not fully implemented for Google REST client yet. Using stream.")
-            stream = True # Pastikan stream selalu True untuk implementasi saat ini
-    
+            stream = True
+        
         api_endpoint = f"{self.base_url}/v1beta/models/{model}:streamGenerateContent"
         request_url = f"{api_endpoint}?alt=sse&key={self.api_key}"
         payload = self._prepare_google_rest_payload(messages, google_search=google_search)
         headers = {'Content-Type': 'application/json'}
 
-        print("--- Google API Request ---") # DEBUG
-        print(f"URL: {request_url}")       # DEBUG
-        print(f"Payload: {json.dumps(payload, indent=2)}") # DEBUG
+        print("--- Google API Request ---")
+        print(f"URL: {request_url}")
+        print(f"Payload: {json.dumps(payload, indent=2)}")
 
         try:
             response = requests.post(request_url, headers=headers, json=payload, stream=True)
-        
-            print(f"Google API Response Status Code: {response.status_code}") # DEBUG
-            if response.status_code != 200:                                   # DEBUG
-                print(f"Google API Response Text: {response.text}")           # DEBUG
-        
-            response.raise_for_status() # Ini akan memicu HTTPError jika status bukan 2xx
+            
+            print(f"Google API Response Status Code: {response.status_code}")
+            if response.status_code != 200:
+                print(f"Google API Response Text: {response.text}")
+            
+            response.raise_for_status()
 
             _web_search_status_container = [False] 
 
-            def _streaming_generator_with_status(response_stream, status_container):
+            def _streaming_generator_inner(response_stream, status_container): # Ubah nama agar tidak bentrok
                 buffer = ""
                 try:
                     for chunk in response_stream.iter_lines():
@@ -170,34 +188,40 @@ class GoogleClient(BaseChatClient):
                 except requests.exceptions.RequestException as http_err:
                     yield f"[Network Error during streaming: {http_err}]"
                 except Exception as stream_err:
+                    print(f"--- Error inside _streaming_generator_inner ---") # DEBUG
+                    traceback.print_exc()                                     # DEBUG
                     yield f"[Error processing stream: {stream_err}]"
-                    traceback.print_exc() # Pastikan ini ada untuk error saat streaming
+                    # traceback.print_exc() # Sudah ada di atas
 
-            generator_instance = _streaming_generator_with_status(response, _web_search_status_container)
-            generator_instance.web_search_status_container = _web_search_status_container
-            return generator_instance
+            # Buat instance generator yang sebenarnya
+            actual_generator = _streaming_generator_inner(response, _web_search_status_container)
+            
+            # Bungkus generator dengan GoogleStreamWrapper
+            wrapped_stream = GoogleStreamWrapper(actual_generator, _web_search_status_container)
+            
+            return wrapped_stream # Kembalikan objek wrapper
 
         except requests.exceptions.HTTPError as errh:
-            st.error(f"HTTP Error calling Google API: {errh}") # Ini akan muncul di UI Streamlit
+            st.error(f"HTTP Error calling Google API: {errh}")
             try:
                 error_details = errh.response.json()
                 st.error(f"API Response (JSON): {error_details}")
             except json.JSONDecodeError:
                 st.error(f"API Response (text): {errh.response.text}")
-            print("--- Google API HTTPError Traceback ---") # DEBUG
-            traceback.print_exc()                           # DEBUG (ke konsol terminal)
-            return None
+            print("--- Google API HTTPError Traceback ---")
+            traceback.print_exc()
+            return None # Pastikan return None secara eksplisit
         except requests.exceptions.RequestException as err:
-            st.error(f"Request Exception calling Google API: {err}") # Ini akan muncul di UI Streamlit
-            print("--- Google API RequestException Traceback ---") # DEBUG
-            traceback.print_exc()                                # DEBUG (ke konsol terminal)
-            return None
+            st.error(f"Request Exception calling Google API: {err}")
+            print("--- Google API RequestException Traceback ---")
+            traceback.print_exc()
+            return None # Pastikan return None secara eksplisit
         except Exception as e:
-            st.error(f"An unexpected error occurred in GoogleClient: {e}") # Ini akan muncul di UI Streamlit
-            print("--- Google API Unexpected Exception Traceback ---") # DEBUG
-            traceback.print_exc()                                    # DEBUG (ke konsol terminal)
-            return None
-       
+            st.error(f"An unexpected error occurred in GoogleClient: {e}")
+            print("--- Google API Unexpected Exception Traceback (in chat_completion) ---")
+            traceback.print_exc()
+            return None # Pastikan return None secara eksplisit
+
 
 # --- OpenRouter Client Implementation ---
 class OpenRouterClient(BaseChatClient):
@@ -227,7 +251,7 @@ class OpenRouterClient(BaseChatClient):
             if stream:
                 response = requests.post(api_endpoint, headers=headers, json=payload, stream=True)
                 response.raise_for_status()
-                def stream_processor(response_stream):
+                def stream_processor(response_stream): # Ini adalah generator
                     for chunk in response_stream.iter_lines():
                         if chunk:
                             decoded_chunk = chunk.decode('utf-8')
@@ -242,14 +266,14 @@ class OpenRouterClient(BaseChatClient):
                                 if content:
                                     yield content
                             except json.JSONDecodeError:
-                                continue
-                return stream_processor(response)
+                                continue # Abaikan jika JSON tidak valid, mungkin chunk tidak lengkap
+                return stream_processor(response) # Mengembalikan generator
             else:
                 response = requests.post(api_endpoint, headers=headers, json=payload)
                 response.raise_for_status()
                 data = response.json()
                 content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
-                return content
+                return content # Mengembalikan string
         except requests.exceptions.HTTPError as errh:
             st.error(f"HTTP Error calling OpenRouter API: {errh}")
             try:
@@ -257,11 +281,11 @@ class OpenRouterClient(BaseChatClient):
                 st.error(f"API Response: {error_details}")
             except:
                 st.error(f"API Response Content: {errh.response.text}")
-            return None
+            return None # Eksplisit return None
         except requests.exceptions.RequestException as err:
             st.error(f"Error calling OpenRouter API: {err}")
-            return None
+            return None # Eksplisit return None
         except Exception as e:
             st.error(f"An unexpected error occurred in OpenRouterClient: {e}")
             traceback.print_exc()
-            return None
+            return None # Eksplisit return None
