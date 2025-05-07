@@ -63,9 +63,10 @@ class XAIClient(BaseChatClient):
 
 # --- Helper Class for Google Stream ---
 class GoogleStreamWrapper:
-    def __init__(self, generator, status_container):
+    def __init__(self, generator, status_container, queries_container): # Tambahkan queries_container
         self.generator = generator
-        self.web_search_status_container = status_container # Ini adalah atribut yang bisa kita akses
+        self.web_search_status_container = status_container
+        self.web_search_queries_container = queries_container # Simpan container query
 
     def __iter__(self):
         return self
@@ -73,8 +74,6 @@ class GoogleStreamWrapper:
     def __next__(self):
         return next(self.generator)
 
-    # Tambahkan ini jika Anda menggunakan st.write_stream(stream)
-    # atau jika pustaka lain mengharapkan metode .close()
     def close(self):
         if hasattr(self.generator, 'close'):
             self.generator.close()
@@ -149,9 +148,10 @@ class GoogleClient(BaseChatClient):
             
             response.raise_for_status()
 
-            _web_search_status_container = [False] 
+            _web_search_status_container = [False]
+            _web_search_queries_list = [[]]
 
-            def _streaming_generator_inner(response_stream, status_container): # Ubah nama agar tidak bentrok
+            def _streaming_generator_inner(response_stream, status_container, queries_list_container): # Ubah nama agar tidak bentrok
                 buffer = ""
                 try:
                     for chunk in response_stream.iter_lines():
@@ -176,6 +176,9 @@ class GoogleClient(BaseChatClient):
                                             web_search_queries = grounding_metadata.get('webSearchQueries', [])
                                             if web_search_queries:
                                                 status_container[0] = True
+                                                for q in current_chunk_queries:
+                                                    if q not in queries_list_container[0]:
+                                                        queries_list_container[0].append(q)
                                         except Exception as e_meta:
                                             pass 
                                     if text_content:
@@ -194,10 +197,10 @@ class GoogleClient(BaseChatClient):
                     # traceback.print_exc() # Sudah ada di atas
 
             # Buat instance generator yang sebenarnya
-            actual_generator = _streaming_generator_inner(response, _web_search_status_container)
+            actual_generator = _streaming_generator_inner(response, _web_search_status_container, _web_search_queries_list)
             
             # Bungkus generator dengan GoogleStreamWrapper
-            wrapped_stream = GoogleStreamWrapper(actual_generator, _web_search_status_container)
+            wrapped_stream = GoogleStreamWrapper(actual_generator, _web_search_status_container, _web_search_queries_list)
             
             return wrapped_stream # Kembalikan objek wrapper
 
