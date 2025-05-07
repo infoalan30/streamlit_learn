@@ -117,7 +117,9 @@ class GoogleClient(BaseChatClient):
         try:
             response = requests.post(request_url, headers=headers, json=payload, stream=True)
             response.raise_for_status()
+            web_search_used = False
             def stream_processor(response_stream):
+                nonlocal web_search_used
                 buffer = ""
                 web_search_used = False
                 try:
@@ -143,7 +145,6 @@ class GoogleClient(BaseChatClient):
                                         grounding_supports = grounding_metadata.get('groundingSupports', [])
                                         if web_search_queries and grounding_supports:
                                             web_search_used = True
-                                            stream_processor.web_search_used = web_search_used
                                     except:
                                         pass
                                 if text_content:
@@ -159,9 +160,19 @@ class GoogleClient(BaseChatClient):
                 except Exception as stream_err:
                     yield f"[Error processing stream: {stream_err}]"
                     traceback.print_exc()
-                # Attach web_search_used attribute to the generator
-                stream_processor.web_search_used = web_search_used
-            return stream_processor(response)
+
+            stream = stream_processor(response)
+            # Process stream and collect content
+            with st.chat_message("assistant"):
+                message_placeholder = st.empty()
+                response_content = message_placeholder.markdown_stream(stream)
+                # Append web search status
+                if google_search_enabled and web_search_used:
+                    response_content += "\n**Web Search: YES**"
+                else:
+                    response_content += "\n**Web Search: NO**"
+                message_placeholder.markdown(response_content)
+            return stream
         except requests.exceptions.HTTPError as errh:
             st.error(f"HTTP Error calling Google API: {errh}")
             try:
