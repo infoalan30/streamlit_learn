@@ -106,7 +106,6 @@ class GoogleClient(BaseChatClient):
             payload["tools"] = [{"google_search": {}}]
         return payload
 
-    def chat_completion(self, model: str, messages: list, stream: bool = False, google_search: bool = False, **kwargs):
 
 
     def chat_completion(self, model: str, messages: list, stream: bool = False, google_search: bool = False, **kwargs):
