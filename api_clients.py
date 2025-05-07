@@ -143,6 +143,7 @@ class GoogleClient(BaseChatClient):
                                         grounding_supports = grounding_metadata.get('groundingSupports', [])
                                         if web_search_queries and grounding_supports:
                                             web_search_used = True
+                                            stream_processor.web_search_used = web_search_used
                                     except:
                                         pass
                                 if text_content:
