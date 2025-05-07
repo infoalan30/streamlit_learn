@@ -142,11 +142,18 @@ class GoogleClient(BaseChatClient):
                                     grounding_supports = grounding_metadata.get('groundingSupports', [])
                                     if web_search_queries and grounding_supports:
                                         web_search_used = True
-                                if text_content:
-                                    yield text_content
-                                if candidate.get('finishReason') == 'SAFETY':
-                                    yield "[Blocked by API due to safety settings]"
-                                    break
+                                    if text_content:
+                                        yield text_content
+                                    if candidate.get('finishReason') == 'SAFETY':
+                                        yield "[Blocked by API due to safety settings]"
+                                        break
+                                    # Ensure web_search_used is checked even in the final chunk
+                                    if candidate.get('finishReason') == 'STOP':
+                                        grounding_metadata = candidate.get('groundingMetadata', {})
+                                        web_search_queries = grounding_metadata.get('webSearchQueries', [])
+                                        grounding_supports = grounding_metadata.get('groundingSupports', [])
+                                        if web_search_queries and grounding_supports:
+                                            web_search_used = True
                                 buffer = ""
                             except json.JSONDecodeError:
                                 pass
