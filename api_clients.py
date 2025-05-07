@@ -176,7 +176,7 @@ class GoogleClient(BaseChatClient):
                                             web_search_queries = grounding_metadata.get('webSearchQueries', [])
                                             if web_search_queries:
                                                 status_container[0] = True
-                                                for q in current_chunk_queries:
+                                                for q in web_search_queries:
                                                     if q not in queries_list_container[0]:
                                                         queries_list_container[0].append(q)
                                         except Exception as e_meta:
