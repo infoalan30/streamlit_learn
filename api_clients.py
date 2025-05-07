@@ -107,77 +107,98 @@ class GoogleClient(BaseChatClient):
         return payload
 
     def chat_completion(self, model: str, messages: list, stream: bool = False, google_search: bool = False, **kwargs):
+
+
+    def chat_completion(self, model: str, messages: list, stream: bool = False, google_search: bool = False, **kwargs):
         if not stream:
             st.warning("Non-streaming not fully implemented for Google REST client yet. Using stream.")
-            stream = True
+            stream = True # Pastikan stream selalu True untuk implementasi saat ini
+    
         api_endpoint = f"{self.base_url}/v1beta/models/{model}:streamGenerateContent"
         request_url = f"{api_endpoint}?alt=sse&key={self.api_key}"
         payload = self._prepare_google_rest_payload(messages, google_search=google_search)
         headers = {'Content-Type': 'application/json'}
+
+        print("--- Google API Request ---") # DEBUG
+        print(f"URL: {request_url}")       # DEBUG
+        print(f"Payload: {json.dumps(payload, indent=2)}") # DEBUG
+
         try:
             response = requests.post(request_url, headers=headers, json=payload, stream=True)
-            response.raise_for_status()
-            _web_search_status_container = [False]
-            def stream_processor(response_stream):
+        
+            print(f"Google API Response Status Code: {response.status_code}") # DEBUG
+            if response.status_code != 200:                                   # DEBUG
+                print(f"Google API Response Text: {response.text}")           # DEBUG
+        
+            response.raise_for_status() # Ini akan memicu HTTPError jika status bukan 2xx
+
+            _web_search_status_container = [False] 
+
+            def _streaming_generator_with_status(response_stream, status_container):
                 buffer = ""
-                web_search_used = False
                 try:
                     for chunk in response_stream.iter_lines():
                         if chunk:
                             decoded_chunk = chunk.decode('utf-8')
                             if decoded_chunk.startswith('data: '):
                                 decoded_chunk = decoded_chunk[len('data: '):]
-                            buffer = decoded_chunk
-                            try:
-                                data = json.loads(buffer)
-                                text_content = ""
-                                if 'candidates' in data and data['candidates']:
-                                    candidate = data['candidates'][0]
-                                    if 'content' in candidate and 'parts' in candidate['content']:
-                                        for part in candidate['content']['parts']:
-                                            if 'text' in part:
-                                                text_content += part['text']
-                                    # Check for web search metadata
-                                    try:
-                                        grounding_metadata = candidate.get('groundingMetadata', {})
-                                        web_search_queries = grounding_metadata.get('webSearchQueries', [])
-                                        grounding_supports = grounding_metadata.get('groundingSupports', [])
-                                        if web_search_queries and grounding_supports:
-                                            status_container[0] = True
-                                    except:
-                                        pass
-                                if text_content:
-                                    yield text_content
-                                if candidate.get('finishReason') == 'SAFETY':
-                                    yield "[Blocked by API due to safety settings]"
-                                    break
-                            except json.JSONDecodeError:
-                                pass
+                            buffer += decoded_chunk
+                            if buffer.strip().endswith('}'):
+                                try:
+                                    data = json.loads(buffer)
+                                    buffer = "" 
+                                    text_content = ""
+                                    if 'candidates' in data and data['candidates']:
+                                        candidate = data['candidates'][0]
+                                        if 'content' in candidate and 'parts' in candidate['content']:
+                                            for part in candidate['content']['parts']:
+                                                if 'text' in part:
+                                                    text_content += part['text']
+                                        try:
+                                            grounding_metadata = candidate.get('groundingMetadata', {})
+                                            web_search_queries = grounding_metadata.get('webSearchQueries', [])
+                                            if web_search_queries:
+                                                status_container[0] = True
+                                        except Exception as e_meta:
+                                            pass 
+                                    if text_content:
+                                        yield text_content
+                                    if candidate.get('finishReason') == 'SAFETY':
+                                        yield "[Blocked by API due to safety settings]"
+                                        break
+                                except json.JSONDecodeError:
+                                    pass 
                 except requests.exceptions.RequestException as http_err:
                     yield f"[Network Error during streaming: {http_err}]"
                 except Exception as stream_err:
                     yield f"[Error processing stream: {stream_err}]"
-                    traceback.print_exc()
+                    traceback.print_exc() # Pastikan ini ada untuk error saat streaming
 
-            generator_instance = stream_processor(response, _web_search_status_container)
+            generator_instance = _streaming_generator_with_status(response, _web_search_status_container)
             generator_instance.web_search_status_container = _web_search_status_container
-            # Process stream and collect content
             return generator_instance
+
         except requests.exceptions.HTTPError as errh:
-            st.error(f"HTTP Error calling Google API: {errh}")
+            st.error(f"HTTP Error calling Google API: {errh}") # Ini akan muncul di UI Streamlit
             try:
                 error_details = errh.response.json()
-                st.error(f"API Response: {error_details}")
-            except:
-                st.error(f"API Response Content: {errh.response.text}")
+                st.error(f"API Response (JSON): {error_details}")
+            except json.JSONDecodeError:
+                st.error(f"API Response (text): {errh.response.text}")
+            print("--- Google API HTTPError Traceback ---") # DEBUG
+            traceback.print_exc()                           # DEBUG (ke konsol terminal)
             return None
         except requests.exceptions.RequestException as err:
-            st.error(f"Error calling Google API: {err}")
+            st.error(f"Request Exception calling Google API: {err}") # Ini akan muncul di UI Streamlit
+            print("--- Google API RequestException Traceback ---") # DEBUG
+            traceback.print_exc()                                # DEBUG (ke konsol terminal)
             return None
         except Exception as e:
-            st.error(f"An unexpected error occurred in GoogleClient: {e}")
-            traceback.print_exc()
+            st.error(f"An unexpected error occurred in GoogleClient: {e}") # Ini akan muncul di UI Streamlit
+            print("--- Google API Unexpected Exception Traceback ---") # DEBUG
+            traceback.print_exc()                                    # DEBUG (ke konsol terminal)
             return None
+       
 
 # --- OpenRouter Client Implementation ---
 class OpenRouterClient(BaseChatClient):
