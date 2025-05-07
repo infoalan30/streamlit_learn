@@ -321,11 +321,16 @@ if should_call_api:
             if stream:
                 response_content = message_placeholder.write_stream(stream)
                 # Append Google Search status for Gemini
-                if google_search_enabled and hasattr(stream, 'web_search_used') and stream.web_search_used:
-                    response_content += "\n**Web Search: YES**"
+                api_used_web_search = False
+                if google_search_enabled and hasattr(stream, 'web_search_status_container'):
+                    api_used_web_search = stream.web_search_status_container[0]
+                if api_used_web_search:
+                    response_content += "\n\n*Web Search: **YES***"
+                elif google_search_enabled:
+                    response_content += "\n\n*Web Search: **NO*** *(API decided not to use search)*"
                 else:
-                    response_content += "\n**Web Search: NO**"
-                message_placeholder.markdown(response_content)
+                     response_content += "\n\n*Web Search: **NO*** *(Not requested for this model)*"
+                message_placeholder.markdown(response_content, unsafe_allow_html=True)
             else:
                 raise ValueError(f"{target_api_family.upper()} client returned None stream, possibly due to connection or setup error.")
 
